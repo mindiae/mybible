@@ -1,0 +1,72 @@
+#!/usr/bin/env sh
+
+MODULES_DIR="${HOME}/.local/share/mybible"
+
+[ -d "$MODULES_DIR" ] || mkdir -p "$MODULES_DIR"
+
+moduleName="${0##*/}"
+module1="${moduleName%%-*}"
+module2="${moduleName##*-}"
+DB1_PATH="${MODULES_DIR}/${module1}.SQLite3"
+DB2_PATH="${MODULES_DIR}/${module2}.SQLite3"
+kjvDbPath="${MODULES_DIR}/kjv.SQLite3"
+
+[ -n "$PAGER" ] || PAGER="less"
+
+book=$1
+[ -n "$1" ] || (sqlite3 "$DB1_PATH" "
+SELECT book_number, short_name, long_name
+FROM books;")
+[ -n "$1" ] || exit 0
+
+book_number=$(
+	sqlite3 "$DB1_PATH" "
+  SELECT book_number
+  FROM books
+  WHERE book_number = '${book}'
+    OR long_name LIKE '%${book}%'
+    OR short_name LIKE '%${book}%'
+  LIMIT 1 "
+)
+
+[ -z "${book_number}" ] && book_number=$(
+	sqlite3 "$kjvDbPath" "
+  SELECT book_number
+    FROM books
+    WHERE long_name LIKE '%${book}%'
+      OR short_name LIKE '%${book}%'
+  LIMIT 1 "
+)
+
+diff=9
+[ "$book_number" = "230" ] && diff=11
+
+cols=$(tput cols)
+
+content_sql="
+SELECT
+      v.chapter || ':' || v.verse ch,
+      v.text,
+      s.text
+FROM
+    verses v
+INNER JOIN
+    db2.verses s
+      ON  v.book_number = s.book_number
+      AND v.chapter     = s.chapter
+      AND v.verse       = s.verse
+ WHERE v.book_number = '${book_number}' "
+
+[ -n "$2" ] && content_sql="$content_sql AND v.chapter = $2"
+
+(
+	sqlite3 "$DB1_PATH" "
+  SELECT ' '  || long_name
+  FROM books WHERE book_number = '${book_number}' "
+
+	sqlite3 "$DB1_PATH" \
+		".mode column  --wrap $(((cols - diff) / 2)) -ww" \
+		".headers off" \
+		"ATTACH DATABASE '${DB2_PATH}' AS db2" \
+		"$content_sql"
+) | $PAGER

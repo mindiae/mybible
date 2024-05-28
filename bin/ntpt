@@ -1,0 +1,57 @@
+#!/usr/bin/env sh
+
+MODULE_DIR="${HOME}/.local/share/mybible"
+
+[ -d "$MODULE_DIR" ] || mkdir -p "$MODULE_DIR"
+
+module="${0##*/}"
+book=$1
+chapter=$2
+cols=$(tput cols)
+
+[ -n "$PAGER" ] || PAGER="less"
+
+databasePath="${MODULE_DIR}/${module}.SQLite3"
+kjvDbPath="${MODULE_DIR}/kjv.SQLite3"
+
+[ -n "$1" ] || (sqlite3 "$databasePath" "
+  SELECT book_number, short_name, long_name
+  FROM books;")
+[ -n "$1" ] || exit 0
+
+book_number=$(
+	sqlite3 "$databasePath" "
+  SELECT book_number
+  FROM books
+  WHERE book_number = '${book}'
+    OR long_name LIKE '%${book}%'
+    OR short_name LIKE '%${book}%'
+  LIMIT 1 "
+)
+
+[ -z "${book_number}" ] && book_number=$(
+	sqlite3 "$kjvDbPath" "
+  SELECT book_number
+    FROM books
+    WHERE long_name LIKE '%${book}%'
+      OR short_name LIKE '%${book}%'
+  LIMIT 1 "
+)
+
+content_sql="
+  SELECT chapter || ':' || verse v, text
+  FROM verses
+  WHERE book_number = '${book_number}' "
+
+[ -n "$2" ] && content_sql="$content_sql AND chapter = ${chapter}"
+
+(
+	sqlite3 "$databasePath" "
+  SELECT ' '  || long_name
+  FROM books WHERE book_number = '${book_number}' "
+
+	sqlite3 "$databasePath" \
+		".mode column --wrap $((cols - 7)) -ww" \
+		".headers off" \
+		"$content_sql"
+) | sed '/^$/d' | $PAGER
